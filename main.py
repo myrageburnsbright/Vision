@@ -11,7 +11,7 @@ import pygame
 cls = True # angles
 ocr = PaddleOCR(cls=cls, lang='ru', use_gpu=True)
 
-video_path = "dd.mp4"
+video_path = "la.mp4"
 audio_path = None
 
 temp_file = False
@@ -74,10 +74,15 @@ def recognize_text(frame):
         full_text = ' '.join([text for _, text in lines])
         print(full_text)
 
+pause = False
+ret, frame = None, None
 
+pause_time = time.time()
 with open("result.txt", "r+", encoding="utf-8") as f:
     while cap.isOpened():
-        ret, frame = cap.read()
+        if not pause:
+            ret, frame = cap.read()
+
         if not ret:
             break
         
@@ -99,6 +104,15 @@ with open("result.txt", "r+", encoding="utf-8") as f:
         if key == ord('q'):
             break
         
+        if key == ord('p'):
+            if pause:
+                pygame.mixer.music.unpause()
+                start_time = start_time + (time.time() - pause_time)
+            else:
+                pygame.mixer.music.pause()
+                pause_time = time.time()
+            pause = not pause
+
         elapsed = time.time() - start_time
         expected = frame_num * frame_duration
         delay = expected - elapsed
