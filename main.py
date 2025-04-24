@@ -1,5 +1,5 @@
 import cv2
-import os
+import os, json
 import tempfile
 import threading
 import time
@@ -8,10 +8,17 @@ import numpy as np
 from moviepy import VideoFileClip
 import pygame
 
+from google.cloud import vision
+
 #main settings
-video_path = "la.mp4"
+video_path = "va1.mp4"
 audio_path = None
 cls = True # angles
+
+path = os.path.dirname(os.path.abspath(__file__))
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(path, "keys.json")
+
+client = vision.ImageAnnotatorClient()
 
 if __name__ == "__main__":
     ocr = PaddleOCR(cls=cls, lang='ru', use_gpu=True)
@@ -24,8 +31,7 @@ if __name__ == "__main__":
             raise ValueError("❌ В видео нет аудио-дорожки!")
 
         temp_audio_path = os.path.join(tempfile.gettempdir(), "temp_audio.wav")
-        print(tempfile.gettempdir())
-        print(temp_audio_path)
+        
         clip.audio.write_audiofile(temp_audio_path, logger=None)
         temp_file = True
         audio_path = temp_audio_path
@@ -43,11 +49,35 @@ if __name__ == "__main__":
     start_time = time.time()
 
     audio_thread = threading.Thread(target=play_audio)
-    #audio_thread.daemon = True
     audio_thread.start()
 
     boxs = []
 
+    def recognize_google(frame):
+        global boxs
+        _, buffer = cv2.imencode(".jpg", frame)
+        content = buffer.tobytes()
+        image_context = vision.ImageContext(language_hints=["ru"])
+        image = vision.Image(content=content)
+
+        # Распознавание текста (OCR)
+        try:
+            new_boxs = []
+            response = client.text_detection(image=image, image_context=image_context)
+            texts = response.text_annotations
+            for text in texts[1:]:  # texts[0] — это весь текст, не нужно рисовать рамки для всего текста
+                vertices = [(vertex.x, vertex.y) for vertex in text.bounding_poly.vertices]
+                new_boxs.append(vertices)
+            boxs = new_boxs
+            if texts:
+                print("Распознанный текст:")
+                print(texts[0].description)
+                return texts[0].description
+            else:
+                print("Текст не найден.")
+        except Exception as e:
+            print("EXECPTION: ", e)
+            
     def recognize_text(frame):
         global boxs
         # Преобразуем кадр в черно-белое изображение для лучшего контраста
@@ -74,19 +104,19 @@ if __name__ == "__main__":
             # Объединение в строку
             full_text = ' '.join([text for _, text in lines])
             print(full_text)
+            return full_text
 
     pause = False
-    ret, frame = None, None
+    ret, frame_original, frame = None, None, None
     
     pause_time = time.time()
-    with open("result.txt", "r+", encoding="utf-8") as f:
+    with open("result.txt", "w", encoding="utf-8") as f:
         while cap.isOpened():
             if not pause:
                 ret, frame = cap.read()
+                if not ret:
+                    break
                 frame_original = frame.copy()
-
-            if not ret:
-                break
             
             frame_num = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
             time_sec = frame_num / fps
@@ -97,13 +127,14 @@ if __name__ == "__main__":
             if key == 13:
                 boxs = []
                 if pause:
-                    frame = frame_pause.copy()
+                    frame = frame_original.copy()
 
             if key == 32:
-                # frame_no_boxes = frame.copy()
                 boxs = []
-                recognize_text(frame=frame)
-            
+                text = recognize_text(frame=frame)
+                #text = recognize_google(frame=frame_original)
+                if text:
+                    f.write(text + '\n\n')
             if key == ord('q'):
                 break
             
@@ -114,12 +145,10 @@ if __name__ == "__main__":
                 else:
                     pygame.mixer.music.pause()
                     pause_time = time.time()
-                    frame_pause = frame_original.copy()
                 pause = not pause
             for box in boxs:
                 points = [(int(point[0]), int(point[1])) for point in box]
                 
-                #frame = frame_original
                 cv2.polylines(frame, [np.array(points)], isClosed=True, color=(0, 255, 0), thickness=2)
 
             cv2.imshow("Video", frame)
